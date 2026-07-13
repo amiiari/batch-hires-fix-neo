@@ -31,7 +31,7 @@ hires-fix in one go — no more clicking the ✨ button once per image.
 1. Clone this repository into your Forge Neo `extensions` folder:
    ```
    cd <your Forge Neo folder>/extensions
-   git clone https://github.com/<your-username>/batch-hires-fix
+   git clone https://github.com/amiiari/batch-hires-fix-neo
    ```
 2. Restart Forge Neo (or Reload UI).
 3. A new **Batch Hires-Fix** tab appears.

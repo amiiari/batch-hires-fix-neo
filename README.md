@@ -2,10 +2,7 @@
 
 A batch-processing hires-fix extension for [Stable Diffusion WebUI Forge — Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo).
 
-Drag and drop any number of txt2img-generated images and run them all through
-hires-fix in one go — no more clicking the ✨ button once per image.
-
-![Forge Neo](https://img.shields.io/badge/Forge-Neo-blue) ![License](https://img.shields.io/badge/license-MIT-green)
+ahahah yes! i usually process all my images in batches as i complete sets, this extension lets you throw all the files you want to hires fix into a box, hires fix and it will... hires fix! wow!
 
 ## Features
 

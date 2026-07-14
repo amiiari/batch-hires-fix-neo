@@ -19,7 +19,7 @@ ahahah yes! i usually process all my images in batches as i complete sets, this 
 - **Full lightbox preview** — click a result for the full-size viewer with
   ←/→ arrow-key navigation, same as the txt2img gallery
 - **Live progress** — results stream into the gallery as each image finishes;
-  the Interrupt button stops the batch
+  the Cancel button aborts the image being worked on and stops the batch
 - **Readable errors** — failures show the full traceback in the status log and
   skip to the next image (configurable)
 

@@ -245,6 +245,24 @@ def _process_single_image(img: Image.Image, geninfo: str | None, hires_params: d
         return [], [], tb
 
 
+# ──────────────────────────────────────────────
+# Cancelling a running batch
+#
+# shared.state.interrupted can't carry the request on its own: state.begin() at
+# the top of every image resets it, so a cancel that lands between two images
+# would be wiped. This flag survives that and is only cleared when a batch starts.
+# ──────────────────────────────────────────────
+_cancel_requested = False
+
+
+def _request_cancel():
+    """Cancel button: abort the image being sampled, then stop the batch."""
+    global _cancel_requested
+    _cancel_requested = True
+    shared.state.interrupt()
+    return "⏹️ Cancel requested — finishing the current image, then stopping."
+
+
 def batch_hires_fix_process(
     files,
     denoising_strength,
@@ -263,6 +281,9 @@ def batch_hires_fix_process(
     Main batch processing function. Processes each image through hires-fix
     sequentially and collects all results.
     """
+    global _cancel_requested
+    _cancel_requested = False
+
     if not files:
         yield [], "No images to process. Please drag and drop some images first."
         return
@@ -292,6 +313,10 @@ def batch_hires_fix_process(
     failed_count = 0
 
     for idx, file_obj in enumerate(files):
+        if _cancel_requested:
+            status_messages.append(f"⏹️ Cancelled — {idx} of {total} images processed.")
+            break
+
         if isinstance(file_obj, str):
             image_path = file_obj
         elif hasattr(file_obj, "name"):
@@ -352,10 +377,12 @@ def batch_hires_fix_process(
                 break
             continue
 
-        # Interrupt pressed during this image: report and stop the batch.
-        # (Checked before the next begin() so the flag hasn't been reset yet.)
-        if shared.state.interrupted or shared.state.stopping_generation:
-            status_messages.append(f"⏹️ [{idx + 1}/{total}] Interrupted — stopping batch.")
+        # Cancel/Interrupt pressed during this image: report and stop the batch.
+        # (Checked before the next begin(), which would reset shared.state's flags.)
+        if _cancel_requested or shared.state.interrupted or shared.state.stopping_generation:
+            status_messages.append(
+                f"⏹️ [{idx + 1}/{total}] Cancelled during {name} — stopping batch."
+            )
             failed_count += 1
             break
 
@@ -475,7 +502,11 @@ def _build_ui_tab():
                         scale=1,
                     )
 
-                process_btn = gr.Button("🚀 Run Batch Hires-Fix", variant="primary", size="lg")
+                with gr.Row():
+                    process_btn = gr.Button(
+                        "🚀 Run Batch Hires-Fix", variant="primary", size="lg", scale=3
+                    )
+                    cancel_btn = gr.Button("⏹️ Cancel", variant="stop", size="lg", scale=1)
 
             # ── Right column: output & status ──
             with gr.Column(scale=2):
@@ -496,6 +527,15 @@ def _build_ui_tab():
                     lines=10,
                     interactive=False,
                 )
+
+        # queue=False so the click is served straight away instead of queueing
+        # behind the running batch — otherwise the cancel could never arrive.
+        cancel_btn.click(
+            fn=_request_cancel,
+            inputs=[],
+            outputs=[status_text],
+            queue=False,
+        )
 
         process_btn.click(
             fn=batch_hires_fix_process,

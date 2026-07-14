@@ -1,5 +1,19 @@
 # Change Log
 
+## 2026-07-14 — Cancel button (v0.2)
+
+A running batch could only be stopped by Forge's global interrupt (or not at all).
+There's now a **⏹️ Cancel** next to Run: it aborts the image currently being sampled
+and stops the batch, keeping whatever already landed in the gallery.
+
+- `shared.state.interrupted` can't carry the request on its own — `state.begin()` at the
+  top of every image clears it, so a cancel landing *between* two images would be wiped.
+  A module-level `_cancel_requested` survives that and is reset only when a batch starts;
+  the button also calls `shared.state.interrupt()` to abort the in-flight sampling.
+- The click is bound with `queue=False`, or it would queue behind the very batch it is
+  trying to stop.
+- Same mechanism as the sibling batch-adetailer extension.
+
 ## 2026-07-12 — Project Initiation
 - Created `log.md` (this file) and `context.md`
 - Gathered initial requirements from user: batch hires-fix extension for Forge Neo via drag-and-drop of txt2img images

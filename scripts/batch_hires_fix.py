@@ -5,6 +5,7 @@ Provides a UI tab where users can drag-and-drop multiple txt2img-generated image
 and run them through hires-fix in batch mode, reusing Forge's existing pipeline.
 """
 import os
+import re
 import traceback
 from contextlib import closing
 
@@ -28,11 +29,76 @@ def _register_settings():
     )
 
     shared.opts.add_option(
+        "batch_hires_fix_scan_roots",
+        shared.OptionInfo(
+            r"C:\gulp\1. generations and tweaking\Commissions;"
+            r"C:\gulp\1. generations and tweaking\Requests",
+            "Test-folder scan roots (semicolon-separated)", gr.Textbox, {}, section=section)
+        .info("Each root is scanned for <set>/Tests folders by the Test Folders panel. "
+              "Non-existent roots are silently skipped."),
+    )
+
+    shared.opts.add_option(
         "batch_hires_fix_skip_errors",
         shared.OptionInfo(True, "Skip Failed Images and Continue", gr.Checkbox,
                           {}, section=section)
         .info("If an image fails during hires-fix, skip it and continue with the rest."),
     )
+
+# ──────────────────────────────────────────────
+# Test-folder scanning
+#
+# Commission/request sets keep work-in-progress test images in a Tests/
+# subfolder as NrM.png bases. The hires-fixed variant lives next to its base
+# as NrM-hires.png (then -adetailer / -edited further down the pipeline).
+# A base is "pending" while no variant of it exists yet.
+# ──────────────────────────────────────────────
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".jxl", ".avif", ".heif")
+_VARIANT_TOKENS = ("-hires", "-adetailer", "-edited")
+
+
+def _natural_key(name):
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name)]
+
+
+def _pending_bases(folder):
+    """Full paths of base images in `folder` that have no variant yet,
+    in natural order (2r1 before 10r1)."""
+    try:
+        files = sorted(os.listdir(folder), key=_natural_key)
+    except OSError:
+        return []
+
+    image_files = [f for f in files if os.path.splitext(f)[1].lower() in _IMAGE_EXTS]
+    stems = {os.path.splitext(f)[0] for f in image_files}
+
+    out = []
+    for f in image_files:
+        stem = os.path.splitext(f)[0]
+        if any(tok in stem for tok in _VARIANT_TOKENS):
+            continue  # is itself a -hires/-adetailer/-edited output
+        if any(f"{stem}{tok}" in stems for tok in _VARIANT_TOKENS):
+            continue  # already processed (or hand-edited past this stage)
+        out.append(os.path.join(folder, f))
+    return out
+
+
+def _scan_test_folders():
+    """[(label, tests_dir_path)] for every <root>/<set>/Tests that still has
+    pending bases. Roots come from the scan-roots setting."""
+    roots = getattr(shared.opts, "batch_hires_fix_scan_roots", "") or ""
+    choices = []
+    for root in (r.strip() for r in roots.split(";")):
+        if not root or not os.path.isdir(root):
+            continue
+        for name in sorted(os.listdir(root), key=_natural_key):
+            tdir = os.path.join(root, name, "Tests")  # also matches "tests": NTFS is case-insensitive
+            if os.path.isdir(tdir):
+                n = len(_pending_bases(tdir))
+                if n:
+                    choices.append((f"{name}  ({n} to do)", tdir))
+    return choices
+
 
 # ──────────────────────────────────────────────
 # Default script args — mirrors modules/api/api.py :: init_default_script_args
@@ -115,7 +181,7 @@ def _apply_source_image_parameters(p, geninfo: str):
 # ──────────────────────────────────────────────
 # Saving with the original filename + suffix
 # ──────────────────────────────────────────────
-def _save_with_original_name(processed, p, stem: str, suffix: str):
+def _save_with_original_name(processed, p, save_opts: dict):
     """
     Save result images as <original filename><suffix>.<ext> directly in the
     output directory (no dated subfolders, no [seed]-[prompt] naming pattern).
@@ -123,7 +189,8 @@ def _save_with_original_name(processed, p, stem: str, suffix: str):
     """
     outdir = p.outpath_samples
     os.makedirs(outdir, exist_ok=True)
-    extension = shared.opts.samples_format
+    extension = save_opts.get("format") or shared.opts.samples_format
+    stem, suffix = save_opts["stem"], save_opts.get("suffix", "")
 
     for i, image in enumerate(processed.images):
         base = f"{stem}{suffix}" if i == 0 else f"{stem}{suffix}-{i}"
@@ -163,7 +230,8 @@ def _process_single_image(img: Image.Image, geninfo: str | None, hires_params: d
     try:
         p = processing.StableDiffusionProcessingTxt2Img(
             outpath_samples=(
-                getattr(shared.opts, "batch_hires_fix_output_dir", None)
+                save_opts.get("output_dir")
+                or getattr(shared.opts, "batch_hires_fix_output_dir", None)
                 or shared.opts.outdir_samples
                 or shared.opts.outdir_txt2img_samples
             ),
@@ -228,8 +296,14 @@ def _process_single_image(img: Image.Image, geninfo: str | None, hires_params: d
             if processed is None:
                 processed = processing.process_images(p)
 
+        if shared.state.interrupted or shared.state.stopping_generation:
+            # A cancelled sampling loop returns the partially-denoised image;
+            # saving it would make the result look finished (and folder mode
+            # would then never re-list the base) — drop it instead.
+            return [], [], None
+
         if save_opts.get("use_original_name"):
-            _save_with_original_name(processed, p, save_opts["stem"], save_opts.get("suffix", ""))
+            _save_with_original_name(processed, p, save_opts)
 
         return processed.images, processed.infotexts, None
     except Exception:
@@ -269,10 +343,14 @@ def batch_hires_fix_process(
     hr_cfg,
     use_original_name,
     filename_suffix,
+    save_to_source=False,
 ):
     """
     Main batch processing function. Processes each image through hires-fix
     sequentially and collects all results.
+
+    save_to_source: each result is saved into the directory its source image
+    came from (folder mode), instead of the configured output directory.
     """
     global _cancel_requested
     _cancel_requested = False
@@ -316,7 +394,12 @@ def batch_hires_fix_process(
             failed_count += 1
             continue
 
-        name = os.path.basename(image_path)
+        fname = os.path.basename(image_path)
+        name = fname
+        if save_to_source:
+            # status lines read "Commission 137 - M, Fluorite/3r1.png"
+            set_dir = os.path.dirname(os.path.dirname(image_path))
+            name = f"{os.path.basename(set_dir)}/{fname}"
 
         try:
             img = Image.open(image_path)
@@ -338,9 +421,15 @@ def batch_hires_fix_process(
 
         save_opts = {
             "use_original_name": bool(use_original_name),
-            "stem": os.path.splitext(name)[0],
+            "stem": os.path.splitext(fname)[0],
             "suffix": filename_suffix or "",
         }
+        if save_to_source:
+            save_opts["output_dir"] = os.path.dirname(image_path)
+            # The downstream pipeline keys on <stem>-hires.png: force png even
+            # if the global samples_format is jpg/jxl/... (also keeps infotext,
+            # which some formats would silently drop).
+            save_opts["format"] = "png"
 
         # state.begin() resets state.interrupted / stopping_generation, which
         # otherwise stay True forever after a UI reload (request_restart calls
@@ -393,6 +482,53 @@ def batch_hires_fix_process(
 
     yield all_results, status_text
 
+def batch_hires_fix_process_folders(
+    folders,
+    denoising_strength,
+    hr_scale,
+    hr_upscaler,
+    hr_second_pass_steps,
+    hr_resize_x,
+    hr_resize_y,
+    hr_sampler_name,
+    hr_scheduler,
+    hr_cfg,
+):
+    """
+    Folder mode: hires-fix every pending base image in the selected Tests
+    folders, saving each result back into the folder it came from.
+    """
+    if not folders:
+        yield [], "No folders selected — tick at least one (🔄 Rescan if the list is stale)."
+        return
+
+    files = [f for folder in folders for f in _pending_bases(folder)]
+    if not files:
+        yield [], ("Nothing to do — every base image in the selected folders "
+                   "already has a -hires (or later) version.")
+        return
+
+    # Original-name saving AND the "-hires" suffix are forced (the suffix
+    # textbox is ignored here): <stem>-hires.png next to its base is what the
+    # pending-scan and the content manager key on — a custom suffix would
+    # leave bases "pending" forever and reprocess them on every run.
+    yield from batch_hires_fix_process(
+        files,
+        denoising_strength,
+        hr_scale,
+        hr_upscaler,
+        hr_second_pass_steps,
+        hr_resize_x,
+        hr_resize_y,
+        hr_sampler_name,
+        hr_scheduler,
+        hr_cfg,
+        True,
+        "-hires",
+        save_to_source=True,
+    )
+
+
 # ──────────────────────────────────────────────
 # Gradio UI Tab
 # ──────────────────────────────────────────────
@@ -414,6 +550,18 @@ def _build_ui_tab():
         with gr.Row():
             # ── Left column: inputs & controls ──
             with gr.Column(scale=1):
+                with gr.Accordion("📁 Test Folders — hires-fix in place", open=True):
+                    folder_select = gr.CheckboxGroup(
+                        choices=_scan_test_folders(),
+                        label="Sets with unprocessed test images "
+                              "(results save back into each Tests folder)",
+                    )
+                    with gr.Row():
+                        folder_btn = gr.Button(
+                            "🚀 Hires-Fix Selected Folders", variant="primary", scale=3
+                        )
+                        refresh_btn = gr.Button("🔄 Rescan", scale=1)
+
                 file_input = gr.File(
                     label="Drop images here (or click to browse)",
                     file_count="multiple",
@@ -515,6 +663,34 @@ def _build_ui_tab():
                     lines=10,
                     interactive=False,
                 )
+
+        refresh_btn.click(
+            fn=lambda: gr.CheckboxGroup(choices=_scan_test_folders(), value=[]),
+            inputs=[],
+            outputs=[folder_select],
+            queue=False,
+        )
+
+        folder_btn.click(
+            fn=batch_hires_fix_process_folders,
+            inputs=[
+                folder_select,
+                denoising_strength,
+                hr_scale,
+                hr_upscaler,
+                hr_second_pass_steps,
+                hr_resize_x,
+                hr_resize_y,
+                hr_sampler_name,
+                hr_scheduler,
+                hr_cfg,
+            ],
+            outputs=[output_gallery, status_text],
+        ).then(  # the run consumed pending work — rescan so the list stays honest
+            fn=lambda: gr.CheckboxGroup(choices=_scan_test_folders(), value=[]),
+            inputs=[],
+            outputs=[folder_select],
+        )
 
         # queue=False so the click is served straight away instead of queueing
         # behind the running batch — otherwise the cancel could never arrive.

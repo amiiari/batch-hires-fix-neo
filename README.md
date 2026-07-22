@@ -7,6 +7,9 @@ ahahah yes! i usually process all my images in batches as i complete sets, this 
 ## Features
 
 - **Drag & drop batch input** — drop multiple images (or click to browse)
+- **Test-folder mode** — scans your work directories for `<set>/Tests` folders
+  with base images that have no `-hires` version yet, shows them as a checkbox
+  list, and saves each result back into the folder its source came from
 - **Faithful to the ✨ button** — uses Forge's own hires-fix pipeline
   (`firstpass_image` + `process_images`), not a reimplementation
 - **Per-image parameter inheritance** — each image's prompt, negative prompt,
@@ -55,6 +58,20 @@ No extra dependencies are required.
 
 4. Click **🚀 Run Batch Hires-Fix**.
 
+### Test-folder mode
+
+The **📁 Test Folders** panel at the top of the tab scans the roots configured
+in Settings for `<set>/Tests` folders (e.g.
+`Commissions/Commission 137/Tests`). A set is listed while its Tests folder
+contains base images (like `3r1.png`) that have no `-hires`, `-adetailer`, or
+`-edited` variant next to them.
+
+Tick the sets you want, click **🚀 Hires-Fix Selected Folders**, and every
+pending image is processed with the settings above — each result saved as
+`<name>-hires.png` into the same folder its source came from. Re-running is
+safe: already-processed images are skipped, and the list rescans itself when
+the run finishes.
+
 The shift / distilled CFG for the hires pass is inherited automatically from
 each image's own generation info (relevant for shift-based models such as the
 Qwen/Flux family).
@@ -64,6 +81,8 @@ Qwen/Flux family).
 Under **Settings → Batch Hires-Fix**:
 
 - **Output Directory** — custom save location (empty = default txt2img output dir)
+- **Test-folder scan roots** — semicolon-separated directories scanned for
+  `<set>/Tests` folders by the Test Folders panel
 - **Max Images per Batch** — safety limit (default 50)
 - **Skip Failed Images and Continue** — keep going when one image fails (default on)
 

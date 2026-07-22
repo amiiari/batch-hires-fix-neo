@@ -163,5 +163,31 @@ and stops the batch, keeping whatever already landed in the gallery.
   upscale 1.25 (step 0.05), upscaler 4xUltrasharp_4xUltrasharpV10, Hires CFG 4.5,
   hires steps 0 = auto (same step count as the source image).
 
+## 2026-07-22 — Test-Folder Mode: Hires-Fix In Place (v0.5.0)
+- **New 📁 Test Folders panel**: scans configurable roots (Settings → "Test-folder
+  scan roots", default Commissions + Requests) for `<set>/Tests` folders holding
+  base images with no `-hires`/`-adetailer`/`-edited` variant yet, and lists them
+  as checkboxes ("Commission 137 - M, Fluorite  (7 to do)").
+- **Hires-Fix Selected Folders**: all pending bases across the ticked sets run as
+  one sequential batch; each result saves back into the folder its source came
+  from (`Tests/1r1.png → Tests/1r1-hires.png`), which is the layout the content
+  manager's variant chain keys on. Original-name saving is forced on in this mode.
+- Re-running is idempotent (bases with any existing variant are skipped) and the
+  list rescans itself after a run. Drag-and-drop mode is unchanged.
+- `test_scan.py`: standalone self-check for the scan logic (Forge modules stubbed).
+- Review findings fixed before release:
+  - **Cancel mid-image no longer saves the partial image**: an interrupted sampling
+    loop returns the partially-denoised result (sd_samplers_common launch_sampling
+    catches InterruptedException and returns last_latent); saving it as
+    `<stem>-hires.png` would look finished — and in folder mode permanently hide the
+    base from the pending scan. Both modes now drop the result when
+    `state.interrupted/stopping_generation` is set.
+  - **Folder mode forces the `-hires` suffix** (suffix textbox ignored there): the
+    pending scan keys on the `-hires/-adetailer/-edited` tokens, so a custom suffix
+    would reprocess every base on every run, multiplying files.
+  - **Folder mode forces png output** regardless of the global samples_format —
+    the content manager chain expects `<stem>-hires.png`, and some formats (heif)
+    drop the embedded infotext. Scanner also recognizes jxl/avif/heif files now.
+
 <!-- Future entries will be appended here -->
 

@@ -8,8 +8,10 @@ ahahah yes! i usually process all my images in batches as i complete sets, this 
 
 - **Drag & drop batch input** — drop multiple images (or click to browse)
 - **Test-folder mode** — scans your work directories for `<set>/Tests` folders
-  with base images that have no `-hires` version yet, shows them as a checkbox
-  list, and saves each result back into the folder its source came from
+  with `-adetailer` images that have no `-hires` version yet, shows them as a
+  checkbox list, and saves each result back into the folder its source came
+  from — together with a plain-Lanczos `-base` twin at the same resolution for
+  the layered edit stage
 - **Faithful to the ✨ button** — uses Forge's own hires-fix pipeline
   (`firstpass_image` + `process_images`), not a reimplementation
 - **Per-image parameter inheritance** — each image's prompt, negative prompt,
@@ -60,17 +62,28 @@ No extra dependencies are required.
 
 ### Test-folder mode
 
+Hires-fix runs **second** in the refine chain, after batch-adetailer:
+
+```
+1r1.png  ->  1r1-adetailer.png  ->  1r1-adetailer-base.png + 1r1-adetailer-hires.png
+```
+
 The **📁 Test Folders** panel at the top of the tab scans the roots configured
 in Settings for `<set>/Tests` folders (e.g.
 `Commissions/Commission 137/Tests`). A set is listed while its Tests folder
-contains base images (like `3r1.png`) that have no `-hires`, `-adetailer`, or
-`-edited` variant next to them.
+contains `-adetailer` images (like `3r1-adetailer.png`) that have no `-hires`
+or `-edited` successor next to them.
 
 Tick the sets you want, click **🚀 Hires-Fix Selected Folders**, and every
-pending image is processed with the settings above — each result saved as
-`<name>-hires.png` into the same folder its source came from. Re-running is
-safe: already-processed images are skipped, and the list rescans itself when
-the run finishes.
+pending image is processed with the settings above. Each image produces two
+files next to its source, both at the upscaled resolution:
+
+- `<name>-hires.png` — the hires-fix result
+- `<name>-base.png` — a plain Lanczos upscale of the source (no model pass),
+  the unedited bottom layer for the Krita edit stage
+
+Re-running is safe: already-processed images are skipped, and the list rescans
+itself when the run finishes.
 
 The shift / distilled CFG for the hires pass is inherited automatically from
 each image's own generation info (relevant for shift-based models such as the

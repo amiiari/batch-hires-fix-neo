@@ -49,21 +49,24 @@ def _register_settings():
 # Test-folder scanning
 #
 # Commission/request sets keep work-in-progress test images in a Tests/
-# subfolder as NrM.png bases. The hires-fixed variant lives next to its base
-# as NrM-hires.png (then -adetailer / -edited further down the pipeline).
-# A base is "pending" while no variant of it exists yet.
+# subfolder. Hires-fix runs SECOND in the refine chain:
+#   NrM.png -> NrM-adetailer.png -> NrM-adetailer-base.png / NrM-adetailer-hires.png
+# The folder panel picks up -adetailer images that have no -hires successor,
+# and saves two files per image at the same 1.25x-style resolution: the
+# hires-fix result (<stem>-hires.png) and a plain Lanczos upscale
+# (<stem>-base.png) as the unedited bottom layer for the Krita edit stage.
 # ──────────────────────────────────────────────
 _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".jxl", ".avif", ".heif")
-_VARIANT_TOKENS = ("-hires", "-adetailer", "-edited")
+_DONE_TOKENS = ("-hires", "-edited")
 
 
 def _natural_key(name):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name)]
 
 
-def _pending_bases(folder):
-    """Full paths of base images in `folder` that have no variant yet,
-    in natural order (2r1 before 10r1)."""
+def _pending_adetailer(folder):
+    """Full paths of -adetailer images in `folder` that have no -hires
+    successor yet, in natural order (2r1-adetailer before 10r1-adetailer)."""
     try:
         files = sorted(os.listdir(folder), key=_natural_key)
     except OSError:
@@ -75,17 +78,17 @@ def _pending_bases(folder):
     out = []
     for f in image_files:
         stem = os.path.splitext(f)[0]
-        if any(tok in stem for tok in _VARIANT_TOKENS):
-            continue  # is itself a -hires/-adetailer/-edited output
-        if any(f"{stem}{tok}" in stems for tok in _VARIANT_TOKENS):
-            continue  # already processed (or hand-edited past this stage)
+        if not stem.endswith("-adetailer"):
+            continue  # bases, -base/-hires outputs, collision copies
+        if any(f"{stem}{tok}" in stems for tok in _DONE_TOKENS):
+            continue  # already hires-fixed (or hand-edited past this stage)
         out.append(os.path.join(folder, f))
     return out
 
 
 def _scan_test_folders():
     """[(label, tests_dir_path)] for every <root>/<set>/Tests that still has
-    pending bases. Roots come from the scan-roots setting."""
+    pending -adetailer images. Roots come from the scan-roots setting."""
     roots = getattr(shared.opts, "batch_hires_fix_scan_roots", "") or ""
     choices = []
     for root in (r.strip() for r in roots.split(";")):
@@ -94,7 +97,7 @@ def _scan_test_folders():
         for name in sorted(os.listdir(root), key=_natural_key):
             tdir = os.path.join(root, name, "Tests")  # also matches "tests": NTFS is case-insensitive
             if os.path.isdir(tdir):
-                n = len(_pending_bases(tdir))
+                n = len(_pending_adetailer(tdir))
                 if n:
                     choices.append((f"{name}  ({n} to do)", tdir))
     return choices
@@ -209,6 +212,25 @@ def _save_with_original_name(processed, p, save_opts: dict):
             save_to_dirs=False,
             p=p,
         )
+
+def _save_base_copy(img: Image.Image, geninfo: str | None, image_path: str, size):
+    """
+    Plain Lanczos upscale of the source at the hires result's exact size,
+    saved as <stem>-base.png next to it — the unedited bottom layer the Krita
+    edit stage puts under the -hires layer. Carries the source's generation
+    info. Skipped if it already exists (re-runs stay idempotent).
+    """
+    outdir = os.path.dirname(image_path)
+    stem = os.path.splitext(os.path.basename(image_path))[0]
+    dest = os.path.join(outdir, f"{stem}-base.png")
+    if os.path.exists(dest):
+        return
+    from PIL.PngImagePlugin import PngInfo
+    meta = PngInfo()
+    if geninfo:
+        meta.add_text("parameters", geninfo)
+    img.resize(size, Image.LANCZOS).save(dest, pnginfo=meta)
+
 
 # ──────────────────────────────────────────────
 # Core Processing Logic — mirrors txt2img_upscale_function
@@ -468,6 +490,16 @@ def batch_hires_fix_process(
             failed_count += 1
             continue
 
+        if save_to_source and result_images:
+            # The Krita edit stage layers -hires over an unedited upscale of
+            # the same size; save that twin alongside.
+            try:
+                _save_base_copy(img, geninfo, image_path, result_images[0].size)
+            except Exception as e:
+                status_messages.append(
+                    f"⚠️ [{idx + 1}/{total}] {name}: -base copy failed: {e}"
+                )
+
         all_results.extend(result_images)
         status_messages.append(f"✅ [{idx + 1}/{total}] Done: {name}")
 
@@ -495,23 +527,24 @@ def batch_hires_fix_process_folders(
     hr_cfg,
 ):
     """
-    Folder mode: hires-fix every pending base image in the selected Tests
-    folders, saving each result back into the folder it came from.
+    Folder mode: hires-fix every pending -adetailer image in the selected
+    Tests folders, saving each result (plus its -base Lanczos twin) back into
+    the folder it came from.
     """
     if not folders:
         yield [], "No folders selected — tick at least one (🔄 Rescan if the list is stale)."
         return
 
-    files = [f for folder in folders for f in _pending_bases(folder)]
+    files = [f for folder in folders for f in _pending_adetailer(folder)]
     if not files:
-        yield [], ("Nothing to do — every base image in the selected folders "
+        yield [], ("Nothing to do — every -adetailer image in the selected folders "
                    "already has a -hires (or later) version.")
         return
 
     # Original-name saving AND the "-hires" suffix are forced (the suffix
-    # textbox is ignored here): <stem>-hires.png next to its base is what the
+    # textbox is ignored here): <stem>-hires.png next to its source is what the
     # pending-scan and the content manager key on — a custom suffix would
-    # leave bases "pending" forever and reprocess them on every run.
+    # leave -adetailer images "pending" forever and reprocess them every run.
     yield from batch_hires_fix_process(
         files,
         denoising_strength,

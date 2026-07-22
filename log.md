@@ -189,5 +189,23 @@ and stops the batch, keeping whatever already landed in the gallery.
     the content manager chain expects `<stem>-hires.png`, and some formats (heif)
     drop the embedded infotext. Scanner also recognizes jxl/avif/heif files now.
 
+## 2026-07-22 — Adetailer-first chain: scan -adetailer inputs, save a -base twin (v0.6)
+
+The refine pipeline flipped to adetailer-first:
+`1r1.png -> 1r1-adetailer.png -> 1r1-adetailer-base.png + 1r1-adetailer-hires.png`
+Hires-fix now runs second, over the adetailer output — its faithful low-denoise
+pass re-sharpens the repaired faces in the artist's own style.
+
+- **Folder scan flipped**: `_pending_bases` → `_pending_adetailer`. A set is
+  listed while it has `-adetailer` images without a `-hires` (or `-edited`)
+  successor. Plain bases are no longer inputs (they belong to batch-adetailer
+  now), which also empties the stale old-set listings.
+- **`-base` Lanczos twin**: folder mode saves `<stem>-base.png` next to each
+  `-hires` result — a plain Lanczos upscale of the source at the exact same
+  resolution, carrying the source's generation info. It is the unedited bottom
+  layer the content manager's Krita edit stage puts under the `-hires` layer,
+  so hires drift can be erased away per-region. Skipped when it already exists.
+- Drag-and-drop mode is unchanged. `test_scan.py` updated to the new rules.
+
 <!-- Future entries will be appended here -->
 

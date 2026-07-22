@@ -213,15 +213,13 @@ def _save_with_original_name(processed, p, save_opts: dict):
             p=p,
         )
 
-def _save_base_copy(img: Image.Image, geninfo: str | None, image_path: str, size):
+def _save_base_copy(img: Image.Image, geninfo: str | None, stem: str, outdir: str, size):
     """
     Plain Lanczos upscale of the source at the hires result's exact size,
     saved as <stem>-base.png next to it — the unedited bottom layer the Krita
     edit stage puts under the -hires layer. Carries the source's generation
     info. Skipped if it already exists (re-runs stay idempotent).
     """
-    outdir = os.path.dirname(image_path)
-    stem = os.path.splitext(os.path.basename(image_path))[0]
     dest = os.path.join(outdir, f"{stem}-base.png")
     if os.path.exists(dest):
         return
@@ -327,6 +325,15 @@ def _process_single_image(img: Image.Image, geninfo: str | None, hires_params: d
         if save_opts.get("use_original_name"):
             _save_with_original_name(processed, p, save_opts)
 
+        if save_opts.get("base_copy") and processed.images:
+            # The Krita edit stage layers -hires over an unedited upscale of
+            # the same size; a twin failure shouldn't fail the image.
+            try:
+                _save_base_copy(img, geninfo, save_opts["stem"],
+                                p.outpath_samples, processed.images[0].size)
+            except Exception as e:
+                print(f"[Batch Hires-Fix] -base copy failed: {e}")
+
         return processed.images, processed.infotexts, None
     except Exception:
         tb = traceback.format_exc()
@@ -365,12 +372,16 @@ def batch_hires_fix_process(
     hr_cfg,
     use_original_name,
     filename_suffix,
+    save_base_copy=True,
     save_to_source=False,
 ):
     """
     Main batch processing function. Processes each image through hires-fix
     sequentially and collects all results.
 
+    save_base_copy: also save a plain Lanczos upscale of each source as
+    <stem>-base.png at the result's resolution (the unedited bottom layer for
+    the Krita edit stage).
     save_to_source: each result is saved into the directory its source image
     came from (folder mode), instead of the configured output directory.
     """
@@ -445,6 +456,7 @@ def batch_hires_fix_process(
             "use_original_name": bool(use_original_name),
             "stem": os.path.splitext(fname)[0],
             "suffix": filename_suffix or "",
+            "base_copy": bool(save_base_copy),
         }
         if save_to_source:
             save_opts["output_dir"] = os.path.dirname(image_path)
@@ -490,16 +502,6 @@ def batch_hires_fix_process(
             failed_count += 1
             continue
 
-        if save_to_source and result_images:
-            # The Krita edit stage layers -hires over an unedited upscale of
-            # the same size; save that twin alongside.
-            try:
-                _save_base_copy(img, geninfo, image_path, result_images[0].size)
-            except Exception as e:
-                status_messages.append(
-                    f"⚠️ [{idx + 1}/{total}] {name}: -base copy failed: {e}"
-                )
-
         all_results.extend(result_images)
         status_messages.append(f"✅ [{idx + 1}/{total}] Done: {name}")
 
@@ -525,6 +527,7 @@ def batch_hires_fix_process_folders(
     hr_sampler_name,
     hr_scheduler,
     hr_cfg,
+    save_base_copy=True,
 ):
     """
     Folder mode: hires-fix every pending -adetailer image in the selected
@@ -558,6 +561,7 @@ def batch_hires_fix_process_folders(
         hr_cfg,
         True,
         "-hires",
+        save_base_copy=save_base_copy,
         save_to_source=True,
     )
 
@@ -671,6 +675,12 @@ def _build_ui_tab():
                         scale=1,
                     )
 
+                save_base_copy = gr.Checkbox(
+                    value=True,
+                    label="Also save a plain Lanczos upscale (<name>-base.png, same size "
+                          "as the result — the unedited layer for the Krita edit stage)",
+                )
+
                 with gr.Row():
                     process_btn = gr.Button(
                         "🚀 Run Batch Hires-Fix", variant="primary", size="lg", scale=3
@@ -717,6 +727,7 @@ def _build_ui_tab():
                 hr_sampler_name,
                 hr_scheduler,
                 hr_cfg,
+                save_base_copy,
             ],
             outputs=[output_gallery, status_text],
         ).then(  # the run consumed pending work — rescan so the list stays honest
@@ -749,6 +760,7 @@ def _build_ui_tab():
                 hr_cfg,
                 use_original_name,
                 filename_suffix,
+                save_base_copy,
             ],
             outputs=[output_gallery, status_text],
         )

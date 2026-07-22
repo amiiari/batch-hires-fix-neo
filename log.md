@@ -207,5 +207,12 @@ pass re-sharpens the repaired faces in the artist's own style.
   so hires drift can be erased away per-region. Skipped when it already exists.
 - Drag-and-drop mode is unchanged. `test_scan.py` updated to the new rules.
 
+## 2026-07-22 — Checkbox for the -base Lanczos twin (v0.6.1)
+
+- The `-base` twin is now a checkbox ("Also save a plain Lanczos upscale"),
+  on by default, honored in BOTH folder mode and drag-and-drop mode. The twin
+  is saved inside `_process_single_image` (it knows the real output dir and
+  result size), so drop-mode twins land in the configured output directory.
+
 <!-- Future entries will be appended here -->
 

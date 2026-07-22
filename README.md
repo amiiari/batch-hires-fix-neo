@@ -82,6 +82,9 @@ files next to its source, both at the upscaled resolution:
 - `<name>-base.png` — a plain Lanczos upscale of the source (no model pass),
   the unedited bottom layer for the Krita edit stage
 
+The `-base` twin is controlled by the **Also save a plain Lanczos upscale**
+checkbox (on by default, works in drag-and-drop mode too).
+
 Re-running is safe: already-processed images are skipped, and the list rescans
 itself when the run finishes.
 

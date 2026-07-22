@@ -83,7 +83,6 @@ Under **Settings → Batch Hires-Fix**:
 - **Output Directory** — custom save location (empty = default txt2img output dir)
 - **Test-folder scan roots** — semicolon-separated directories scanned for
   `<set>/Tests` folders by the Test Folders panel
-- **Max Images per Batch** — safety limit (default 50)
 - **Skip Failed Images and Continue** — keep going when one image fails (default on)
 
 ## License
